@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Downloader</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>YouTube Downloader</h1>
+        
+        <div class="input-section">
+            <label for="youtube-url">YouTube URL</label>
+            <div class="url-input-container">
+                <input type="text" id="youtube-url" placeholder="https://www.youtube.com/watch?v=...">
+                <button id="get-video-btn">Get Video</button>
+            </div>
+        </div>
+
+        <div id="video-info" class="hidden">
+            <div class="video-header">
+                <img id="thumbnail" src="" alt="Thumbnail" class="thumbnail">
+                <div class="video-details">
+                    <h2 id="title">Video Title</h2>
+                    <p id="duration">Duration: 00:00</p>
+                </div>
+            </div>
+
+            <div class="quality-section">
+                <h3>1. Choose video quality</h3>
+                <p class="section-help">Audio is added automatically for video downloads.</p>
+                <div id="formats-container" class="formats-grid"></div>
+            </div>
+
+            <div id="download-section" class="hidden">
+                <div class="output-format-section">
+                    <label for="output-format">2. Save as</label>
+                    <select id="output-format">
+                        <optgroup label="Video">
+                            <option value="mp4">MP4 video (recommended)</option>
+                            <option value="mkv">MKV video</option>
+                        </optgroup>
+                        <optgroup label="Audio only">
+                            <option value="mp3">MP3 audio</option>
+                            <option value="aac">AAC audio</option>
+                        </optgroup>
+                    </select>
+                    <p id="output-format-help" class="section-help">MP4 works with most phones, browsers, and media players.</p>
+                </div>
+                <button id="download-btn" class="download-btn">Download</button>
+                <div id="progress-container" class="hidden">
+                    <div class="progress-track" aria-hidden="true">
+                        <div id="progress-bar"></div>
+                    </div>
+                    <span id="progress-text" aria-live="polite">Preparing download…</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="error-message" class="error hidden"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
