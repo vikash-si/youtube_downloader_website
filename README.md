@@ -108,7 +108,58 @@ python backend/main.py
 python backend\main.py
 ```
 
-Serve the `frontend` folder with VS Code Live Server on port 5500, then open `index.html` in a browser. The frontend is configured to call the API at `http://127.0.0.1:8000`.
+Serve the `frontend` folder with VS Code Live Server on port 5500, then open `index.html` in a browser. The frontend detects this local-development port and calls the API at port `8000` on the same host.
+
+## Local network hosting
+
+The backend binds to all local interfaces by default. To share the website with devices on the same Wi-Fi or Ethernet network, serve the frontend from the repository root:
+
+```bash
+python3 -m http.server 5500 --bind 0.0.0.0 --directory frontend
+```
+
+For this Mac's current LAN address (`192.168.1.4`), open the site from another device at:
+
+```text
+http://192.168.1.4:5500
+```
+
+The frontend automatically sends API requests to `http://192.168.1.4:8000` when it is opened through that address. If macOS Firewall is enabled, allow incoming connections for Python or Terminal. This configuration is for the local network only; do not expose these ports to the public internet through router port forwarding.
+
+## Production deployment with Apache
+
+Use a reverse proxy rather than exposing FastAPI on port `8000`. Serve the `frontend` folder as Apache's document root and proxy `/api/` requests to the local FastAPI process.
+
+```apache
+DocumentRoot "/www/wwwroot/example.com/frontend"
+
+ProxyRequests Off
+ProxyPreserveHost On
+ProxyPass /api/ http://127.0.0.1:8000/api/ connectiontimeout=5 timeout=3600
+ProxyPassReverse /api/ http://127.0.0.1:8000/api/
+
+<Directory "/www/wwwroot/example.com/frontend">
+    Require all granted
+</Directory>
+```
+
+Run the backend through a process manager such as Supervisor, with one process because download-job progress is stored in memory:
+
+```text
+/usr/bin/env PATH=/usr/local/bin:/usr/bin:/bin /www/wwwroot/example.com/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+Use HTTPS for the public site. Keep port `8000` private and allow public access only through Apache on ports `80` and `443`.
+
+### Optional YouTube cookies
+
+YouTube can require an authenticated session for requests from a server IP. If you use a cookies file, export it in Netscape `cookies.txt` format, keep it outside the document root, and pass its location through `YT_DLP_COOKIES`:
+
+```text
+YT_DLP_COOKIES=/www/wwwroot/example.com/private/youtube-cookies.txt
+```
+
+The application reads this variable when it starts. Restart the process after replacing the file. Cookies are sensitive session credentials: never commit, publish, or share them, and expect YouTube to expire or block them.
 
 ## Notes
 

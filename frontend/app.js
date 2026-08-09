@@ -1,8 +1,12 @@
 // YouTube Downloader Frontend
 document.addEventListener('DOMContentLoaded', function() {
-    // Production requests use Apache's same-origin /api proxy. A local setup
-    // can still override this before loading the script.
-    const apiBaseUrl = window.API_BASE_URL || window.location.origin;
+    // Production requests use Apache's same-origin /api proxy. Local servers
+    // commonly serve the frontend on port 5500 while FastAPI uses port 8000.
+    const isLocalDevelopment = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+        || window.location.port === '5500';
+    const apiBaseUrl = window.API_BASE_URL || (isLocalDevelopment
+        ? `${window.location.protocol}//${window.location.hostname}:8000`
+        : window.location.origin);
     const urlInput = document.getElementById('youtube-url');
     const getVideoBtn = document.getElementById('get-video-btn');
     const videoInfo = document.getElementById('video-info');
