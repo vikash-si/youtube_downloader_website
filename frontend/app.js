@@ -1,9 +1,8 @@
 // YouTube Downloader Frontend
 document.addEventListener('DOMContentLoaded', function() {
-    // The frontend is served by Live Server on port 5500 while FastAPI runs on
-    // port 8000. Set `window.API_BASE_URL` before this script to override this
-    // for another deployment environment.
-    const apiBaseUrl = window.API_BASE_URL || 'http://127.0.0.1:8000';
+    // Production requests use Apache's same-origin /api proxy. A local setup
+    // can still override this before loading the script.
+    const apiBaseUrl = window.API_BASE_URL || window.location.origin;
     const urlInput = document.getElementById('youtube-url');
     const getVideoBtn = document.getElementById('get-video-btn');
     const videoInfo = document.getElementById('video-info');
@@ -116,6 +115,28 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
+        let saveFileHandle = null;
+        // Chromium browsers on HTTPS can ask for the destination before the
+        // server-side yt-dlp job begins. Other browsers use their normal
+        // download flow after the job completes.
+        if ('showSaveFilePicker' in window) {
+            const suggestedName = `${title.textContent || 'youtube-download'}.${selectedOutputFormat}`
+                .replace(/[\\/:*?"<>|]/g, '_');
+            try {
+                saveFileHandle = await window.showSaveFilePicker({
+                    suggestedName,
+                    types: [{
+                        description: `${selectedOutputFormat.toUpperCase()} media file`,
+                        accept: { 'application/octet-stream': [`.${selectedOutputFormat}`] },
+                    }],
+                });
+            } catch (error) {
+                if (error.name === 'AbortError') return;
+                showError('Unable to choose a save location: ' + error.message);
+                return;
+            }
+        }
+
         showLoading(true);
         hideError();
         progressContainer.classList.remove('hidden');
@@ -142,28 +163,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const { job_id: jobId } = await startResponse.json();
             await waitForDownload(jobId);
-            const response = await fetch(`${apiBaseUrl}/api/download/${jobId}/file`);
-            if (!response.ok) {
-                throw new Error(await getErrorMessage(response, 'Download failed'));
-            }
-
-            // Keep the completed yt-dlp progress visible while the finalized
-            // file is handed to the browser for the Save dialog.
-            progressText.textContent = 'Sending file to browser…';
-            const blob = await readDownloadResponse(response);
-            if (blob.size === 0) {
-                throw new Error('The server returned an empty media file');
-            }
             progressBar.style.width = '100%';
-            progressText.textContent = 'Download ready';
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${title.textContent}.${selectedOutputFormat}`;
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
+            const fileUrl = `${apiBaseUrl}/api/download/${jobId}/file`;
+            if (saveFileHandle) {
+                progressText.textContent = 'Saving to your selected location…';
+                await saveDownloadToFile(saveFileHandle, fileUrl);
+            } else {
+                progressText.textContent = 'Opening browser download…';
+                window.location.assign(fileUrl);
+            }
 
             // Show success message
             showSuccess('Download completed successfully!');
@@ -189,43 +197,39 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             if (job.status === 'completed') {
                 progressBar.style.width = '100%';
-                progressText.textContent = 'Preparing file for browser…';
+                progressText.textContent = 'Ready — opening the browser download…';
                 return;
             }
 
-            const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
-            progressBar.style.width = `${progress}%`;
-            progressText.textContent = progress > 0
-                ? `Downloading video… ${Math.round(progress)}%`
-                : 'Preparing video…';
+            const reportedProgress = Math.max(0, Math.min(100, Number(job.progress) || 0));
+            const isFinalizing = reportedProgress >= 99;
+            // yt-dlp can report 99% while FFmpeg is still merging audio/video
+            // or converting the chosen format. Keep that state distinct from
+            // the browser download, which begins only after this job completes.
+            progressBar.style.width = `${isFinalizing ? 99 : reportedProgress}%`;
+            progressText.textContent = isFinalizing
+                ? 'Finalizing media — merging audio/video…'
+                : reportedProgress > 0
+                    ? `Downloading video… ${Math.round(reportedProgress)}%`
+                    : 'Preparing video…';
             await new Promise(resolve => setTimeout(resolve, 200));
         }
     }
 
-    async function readDownloadResponse(response) {
-        const contentLength = Number(response.headers.get('content-length'));
-        if (!response.body) {
-            return response.blob();
+    async function saveDownloadToFile(fileHandle, fileUrl) {
+        const response = await fetch(fileUrl);
+        if (!response.ok) {
+            throw new Error(await getErrorMessage(response, 'Download failed'));
         }
 
-        const reader = response.body.getReader();
-        const chunks = [];
-        let received = 0;
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            chunks.push(value);
-            received += value.length;
-            // The progress bar represents the yt-dlp job, which is already
-            // complete. Do not reset it while the browser receives the file.
-            if (!contentLength) {
-                progressText.textContent = `Sending file to browser… ${formatFileSize(received)}`;
-            }
+        const writable = await fileHandle.createWritable();
+        if (response.body) {
+            await response.body.pipeTo(writable);
+            return;
         }
 
-        return new Blob(chunks, { type: response.headers.get('content-type') || 'application/octet-stream' });
+        await writable.write(await response.blob());
+        await writable.close();
     }
 
     async function getErrorMessage(response, fallback) {

@@ -38,6 +38,12 @@ deno_path = shutil.which("deno")
 if deno_path:
     YT_DLP_COMMAND += ["--js-runtimes", f"deno:{deno_path}"]
 
+# A Netscape-format YouTube cookies file can be supplied outside the project
+# through YT_DLP_COOKIES. Keep it out of the web root and source control.
+cookies_path = os.environ.get("YT_DLP_COOKIES")
+if cookies_path and os.path.isfile(cookies_path):
+    YT_DLP_COMMAND += ["--cookies", cookies_path]
+
 class VideoInfoRequest(BaseModel):
     url: str
 
@@ -103,6 +109,7 @@ def get_video_info(url: str) -> dict:
     audio_formats = [
         fmt for fmt in info.get("formats", [])
         if fmt.get("acodec") not in (None, "none")
+        and fmt.get("protocol") not in {"m3u8", "m3u8_native"}
     ]
     preferred_audio_formats = [fmt for fmt in audio_formats if fmt.get("ext") == "m4a"]
     best_audio = max(
@@ -110,7 +117,7 @@ def get_video_info(url: str) -> dict:
         key=get_format_filesize,
         default=None,
     )
-    best_audio_size = get_format_filesize(best_audio) if best_audio else 0
+    best_audio_size = get_format_filesize(best_audio, duration) if best_audio else 0
 
     # Process formats
     formats = []
@@ -119,6 +126,12 @@ def get_video_info(url: str) -> dict:
             # The quality picker is for video downloads. Exclude audio-only
             # streams, which otherwise show up as a confusing "Unknown" row.
             if fmt.get("vcodec") in (None, "none"):
+                continue
+
+            # Avoid YouTube's HLS playlists (for example, format 95). They can
+            # expire or reject individual fragments with HTTP 403, whereas the
+            # direct DASH/HTTPS streams are more reliable for server downloads.
+            if fmt.get("protocol") in {"m3u8", "m3u8_native"}:
                 continue
                 
             # Skip formats that are not MP4 compatible or have no ext
@@ -133,7 +146,7 @@ def get_video_info(url: str) -> dict:
                     "quality": quality,
                     "resolution": fmt.get("resolution", "Unknown"),
                     "ext": fmt.get("ext", "unknown"),
-                    "filesize": get_format_filesize(fmt) + (
+                    "filesize": get_format_filesize(fmt, duration) + (
                         best_audio_size if fmt.get("acodec") in (None, "none") else 0
                     )
                 }
@@ -157,11 +170,20 @@ def get_video_info(url: str) -> dict:
         "formats": unique_formats
     }
 
-def get_format_filesize(format_info: Optional[dict]) -> int:
-    """Return the exact size when known, otherwise yt-dlp's estimate."""
+def get_format_filesize(format_info: Optional[dict], duration: Optional[float] = None) -> int:
+    """Return the exact size, yt-dlp estimate, or a bitrate-based estimate."""
     if not format_info:
         return 0
-    return format_info.get("filesize") or format_info.get("filesize_approx") or 0
+    known_size = format_info.get("filesize") or format_info.get("filesize_approx")
+    if known_size:
+        return known_size
+
+    # YouTube often omits a size for adaptive formats. tbr is kilobits/sec, so
+    # it can still provide a useful approximate size for the quality picker.
+    bitrate_kbps = format_info.get("tbr")
+    if bitrate_kbps and duration:
+        return int(float(bitrate_kbps) * 1000 * float(duration) / 8)
+    return 0
 
 def get_quality_label(format_info: dict) -> str:
     """Convert format info to quality label"""
@@ -267,6 +289,7 @@ def download_media(
                 fmt for fmt in info.get("formats", [])
                 if fmt.get("vcodec") not in (None, "none")
                 and get_quality_label(fmt) == request.quality
+                and fmt.get("protocol") not in {"m3u8", "m3u8_native"}
             ]
             selected_format = next(
                 (fmt for fmt in matching_formats if fmt.get("ext") == "mp4"),
